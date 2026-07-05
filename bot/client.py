@@ -103,6 +103,16 @@ class BinanceFuturesClient:
             headers["X-MBX-APIKEY"] = self.api_key
         return headers
 
+    def _best_book_level(self, levels: Any) -> tuple[Any, Any]:
+        """Return the first order book level, or N/A placeholders if unavailable."""
+
+        if isinstance(levels, list) and levels and isinstance(levels[0], list):
+            best_level = levels[0]
+            best_price = best_level[0] if len(best_level) > 0 else "N/A"
+            best_quantity = best_level[1] if len(best_level) > 1 else "N/A"
+            return best_price, best_quantity
+        return "N/A", "N/A"
+
     def _send_request(
         self,
         method: str,
@@ -128,6 +138,7 @@ class BinanceFuturesClient:
         """
 
         request_params: dict[str, Any] = dict(params or {})
+        method_upper = method.upper()
         timestamp: int | None = None
         if signed:
             self._ensure_credentials()
@@ -142,7 +153,7 @@ class BinanceFuturesClient:
 
         logger.debug(
             "Outgoing request: method=%s url=%s timestamp=%s params=%s",
-            method.upper(),
+            method_upper,
             url,
             timestamp,
             redacted_params,
@@ -151,7 +162,7 @@ class BinanceFuturesClient:
         for attempt in range(1, self.max_retries + 1):
             try:
                 response = self.session.request(
-                    method.upper(),
+                    method_upper,
                     url,
                     params=request_params,
                     headers=headers,
@@ -166,7 +177,7 @@ class BinanceFuturesClient:
                     "Retry attempt %s/%s for %s %s after %.1fs due to network error: %s",
                     attempt + 1,
                     self.max_retries,
-                    method.upper(),
+                    method_upper,
                     endpoint,
                     sleep_seconds,
                     exc,
@@ -179,7 +190,7 @@ class BinanceFuturesClient:
 
             logger.info(
                 "Response received: method=%s endpoint=%s status=%s",
-                method.upper(),
+                method_upper,
                 endpoint,
                 response.status_code,
             )
@@ -206,7 +217,7 @@ class BinanceFuturesClient:
                         "Retry attempt %s/%s for %s %s after %.1fs due to rate limit: %s",
                         attempt + 1,
                         self.max_retries,
-                        method.upper(),
+                        method_upper,
                         endpoint,
                         sleep_seconds,
                         json.dumps(parsed_body if isinstance(parsed_body, dict) else {"body": response.text}, ensure_ascii=False),
@@ -285,15 +296,15 @@ class BinanceFuturesClient:
 
         bids = payload.get("bids", [])
         asks = payload.get("asks", [])
-        best_bid = bids[0] if isinstance(bids, list) and bids else ["N/A", "N/A"]
-        best_ask = asks[0] if isinstance(asks, list) and asks else ["N/A", "N/A"]
+        best_bid_price, best_bid_qty = self._best_book_level(bids)
+        best_ask_price, best_ask_qty = self._best_book_level(asks)
         logger.info(
             "Pre-order book snapshot for %s: best_bid=%s (qty=%s), best_ask=%s (qty=%s)",
             symbol.upper(),
-            best_bid[0],
-            best_bid[1],
-            best_ask[0],
-            best_ask[1],
+            best_bid_price,
+            best_bid_qty,
+            best_ask_price,
+            best_ask_qty,
         )
         return payload
 
