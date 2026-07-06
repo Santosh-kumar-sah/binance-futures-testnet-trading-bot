@@ -1,190 +1,104 @@
 # Trading Bot for Binance Futures Testnet
 
-Production-oriented CLI trading bot for Binance USDT-M Futures Testnet. The implementation uses direct REST calls with `requests`, HMAC-SHA256 signing, exchange metadata validation, structured logging, and a small but explicit CLI surface.
+Small CLI trading bot for Binance USDT-M Futures Testnet. It signs requests with HMAC-SHA256, validates symbol filters before order submission, retries selected API failures, and writes structured logs for troubleshooting.
 
-## Architecture
+## What It Does
 
-```text
-CLI (cli.py)
-  -> Validators (pure input normalization and fast failure)
-  -> OrderService (order construction + symbol filter checks)
-  -> BinanceFuturesClient (auth, signing, retries, HTTP)
-  -> Binance Futures Testnet REST API
-```
-
-Implemented behaviors include MARKET-order poll-and-confirm handling and a pre-order depth snapshot for diagnostics.
+- Places `MARKET`, `LIMIT`, and `STOP_LIMIT` orders.
+- Validates quantity and price against Binance exchange filters.
+- Prompts interactively for any missing required inputs.
+- Polls MARKET orders after submission so the console shows the settled result instead of the first transient response.
+- Captures a pre-order depth snapshot in the logs for extra context.
 
 ## Project Layout
 
 ```text
 trading_bot/
   bot/
-    __init__.py
     client.py
     orders.py
     validators.py
     logging_config.py
     exceptions.py
   cli.py
-  tests/
-    test_validators.py
-    test_client.py
+  check_order.py
+  demo_error_cases.py
   logs/
-    .gitkeep
+  tests/
   .env.example
   README.md
   requirements.txt
-  .gitignore
 ```
+
+## Requirements
+
+- Python environment with the dependencies from `requirements.txt`.
+- Binance Futures Testnet API key and secret.
+- A `.env` file with credentials or the ability to enter them when prompted.
 
 ## Setup
 
-1. Create a Binance Futures Testnet account and enable Futures Testnet access.
-2. Generate a Testnet API key and secret from Binance Futures Testnet.
-3. Clone the repository and open the `trading_bot` folder.
-4. Create and activate a virtual environment.
-5. Install dependencies with `pip install -r requirements.txt`.
-6. Copy `.env.example` to `.env` and set:
+1. Create or activate your virtual environment.
+2. Install dependencies.
+
+```bash
+pip install -r requirements.txt
+```
+
+3. Copy `.env.example` to `.env` and fill in your Testnet credentials.
 
 ```env
 BINANCE_API_KEY=your_testnet_api_key_here
 BINANCE_API_SECRET=your_testnet_api_secret_here
 ```
 
-The CLI loads `.env` automatically through `python-dotenv`.
+4. Run the CLI from the project root so imports like `bot.*` resolve correctly.
 
-## Runnable Examples
+## Usage
 
-Market buy:
+The CLI accepts arguments, then falls back to prompts if required values are missing.
 
 ```bash
 python cli.py --symbol BTCUSDT --side BUY --type MARKET --quantity 0.001
-```
-
-Limit sell:
-
-```bash
 python cli.py --symbol BTCUSDT --side SELL --type LIMIT --quantity 0.001 --price 72000
-```
-
-Bonus stop-limit order:
-
-```bash
 python cli.py --symbol BTCUSDT --side SELL --type STOP_LIMIT --quantity 0.001 --price 71500 --stop-price 71000
 ```
 
-If you omit required arguments, the CLI falls back to interactive prompts.
+Supported flags:
 
-## Exit Codes
-
-- `0`: Success
-- `1`: Validation error, including malformed input or symbol filter violations
-- `2`: Binance API error, including insufficient balance, invalid symbol, or rate limit exhaustion
-- `3`: Network error, including timeout or connection failure
-
-## Error Handling Notes
-
-- Missing API credentials are surfaced explicitly before any signed request is sent.
-- Invalid symbols are rejected before order submission.
-- Quantity and price are validated against the symbol's `LOT_SIZE` and `PRICE_FILTER` values from `exchangeInfo`.
-- Binance rate-limit responses are retried with basic exponential backoff.
-- Raw tracebacks are written to the rotating log file, not shown to the user.
-
-## Assumptions
-
-- Only USDT-margined symbols are supported.
-- Order quantities and prices must satisfy Binance symbol filters exactly; no automatic rounding is applied.
-- Stop-limit orders are sent using Binance Futures `STOP` order parameters with both `price` and `stopPrice`.
-- OCO orders are out of scope because the bot is intentionally limited to the three requested order types.
-- `--testnet` is enabled by default; a hidden `--mainnet` switch exists only for local experimentation.
-- MARKET orders on Binance Futures Testnet (USDT-M) were observed to return status=NEW with executedQty=0 immediately after the initial order placement response, before settling to status=FILLED shortly after (typically within ~1-2 seconds). To handle this reliably, the bot polls GET /fapi/v1/order up to 3 times (500ms apart) after placing a MARKET order, and reports the final settled state to the console and log file rather than the initial POST response. The bot also logs a pre-order snapshot of top-of-book bid/ask depth (via GET /fapi/v1/depth) for diagnostic visibility into liquidity conditions at order time.
+- `--symbol` for the trading pair, for example `BTCUSDT`.
+- `--side` for `BUY` or `SELL`.
+- `--type` for `MARKET`, `LIMIT`, or `STOP_LIMIT`.
+- `--quantity` for order size.
+- `--price` for `LIMIT` and `STOP_LIMIT` orders.
+- `--stop-price` for `STOP_LIMIT` orders.
+- `--testnet` is enabled by default; `--mainnet` exists only for local experimentation and is hidden from help output.
 
 ## Testing
 
-Run the test suite with:
+Run the test suite from the project root:
 
 ```bash
-pytest tests/ -v
+d:/Bot/.venv/Scripts/python.exe -m pytest tests -v
 ```
 
-The tests mock HTTP calls and do not touch the live API.
+The tests mock HTTP calls, so they do not hit the live Binance API.
 
-## Sample Log Output
+## Logging
 
-```text
-2026-07-04 12:00:00,123 | INFO | orders | Order request summary: symbol=BTCUSDT side=BUY type=MARKET quantity=0.001 price=N/A stopPrice=N/A timeInForce=N/A
-2026-07-04 12:00:00,456 | INFO | client | Response received: method=POST endpoint=/fapi/v1/order status=200
-2026-07-04 12:00:00,456 | INFO | orders | Order response summary: {'orderId': 12345, 'status': 'FILLED', 'symbol': 'BTCUSDT', 'side': 'BUY', 'type': 'MARKET', 'executedQty': '0.001', 'avgPrice': '27300.10', 'origQty': '0.001', 'price': '0'}
-```
+Runtime logs are written under `logs/`. Sensitive values are redacted, and stack traces stay in the log file rather than being printed directly to the console.
 
-## Sample Terminal Transcripts
+## Exit Codes
 
-### Successful MARKET Order
+- `0`: Success.
+- `1`: Validation error, including malformed input or symbol filter failures.
+- `2`: Binance API error, including insufficient balance, invalid symbol, or rate limiting.
+- `3`: Network error, including timeout or connection failure.
 
-```text
-$ python cli.py --symbol BTCUSDT --side BUY --type MARKET --quantity 0.001
-ORDER REQUEST
--------------
-Symbol    : BTCUSDT
-Side      : BUY
-Type      : MARKET
-Quantity  : 0.001
-Price     : N/A
-Stop Price: N/A
-Testnet   : yes
+## Notes
 
-ORDER RESPONSE
---------------
-Order ID     : 12345
-Status       : FILLED
-Symbol       : BTCUSDT
-Side         : BUY
-Type         : MARKET
-Executed Qty : 0.001
-Avg Price    : 27300.10
-Orig Qty     : 0.001
-Price        : 0
-```
-
-Log file entries:
-
-```text
-2026-07-04 12:00:00,123 | INFO | orders | Order request summary: symbol=BTCUSDT side=BUY type=MARKET quantity=0.001 price=N/A stopPrice=N/A timeInForce=N/A
-2026-07-04 12:00:00,456 | INFO | client | Response received: method=POST endpoint=/fapi/v1/order status=200
-2026-07-04 12:00:00,456 | INFO | orders | Order response summary: {'orderId': 12345, 'status': 'FILLED', 'symbol': 'BTCUSDT', 'side': 'BUY', 'type': 'MARKET', 'executedQty': '0.001', 'avgPrice': '27300.10', 'origQty': '0.001', 'price': '0'}
-```
-
-### Successful LIMIT Order
-
-```text
-$ python cli.py --symbol BTCUSDT --side SELL --type LIMIT --quantity 0.001 --price 72000
-ORDER REQUEST
--------------
-Symbol    : BTCUSDT
-Side      : SELL
-Type      : LIMIT
-Quantity  : 0.001
-Price     : 72000
-Stop Price: N/A
-Testnet   : yes
-
-ORDER RESPONSE
---------------
-Order ID     : 12346
-Status       : NEW
-Symbol       : BTCUSDT
-Side         : SELL
-Type         : LIMIT
-Executed Qty : 0
-Avg Price    : N/A
-Orig Qty     : 0.001
-Price        : 72000
-```
-
-Log file entries:
-
-```text
-2026-07-04 12:01:00,123 | INFO | orders | Order request summary: symbol=BTCUSDT side=SELL type=LIMIT quantity=0.001 price=72000 stopPrice=N/A timeInForce=GTC
-2026-07-04 12:01:00,456 | INFO | client | Response received: method=POST endpoint=/fapi/v1/order status=200
-2026-07-04 12:01:00,456 | INFO | orders | Order response summary: {'orderId': 12346, 'status': 'NEW', 'symbol': 'BTCUSDT', 'side': 'SELL', 'type': 'LIMIT', 'executedQty': '0', 'avgPrice': 'N/A', 'origQty': '0.001', 'price': '72000'}
-```
+- Only USDT-margined symbols are supported.
+- Order quantities and prices must already satisfy Binance filters; the bot does not round values automatically.
+- Stop-limit orders are submitted with Binance Futures `STOP` parameters using both `price` and `stopPrice`.
+- Missing credentials are handled before any signed request is sent.
+- The codebase includes focused tests for validators, client behavior, and MARKET-order polling.
